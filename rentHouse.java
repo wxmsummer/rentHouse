@@ -28,8 +28,8 @@ contract RentHouse {
 
     // 租房信息结构体 
     struct RentalInfo{
-        int64 id            // 租房信息id
-        string owner_id     // 房东id
+        int64 house_id      // 租房信息id
+        uint64 owner_id     // 房东id
         string room_name    // 房名
         string address      // 地址
         string model        // 户型，如1室1厅1卫
@@ -41,44 +41,57 @@ contract RentHouse {
         string note         // 备注，其他信息，如wifi是否通畅、水电费等
     }
 
+    // 房间结构体
     struct House{
-        int64 id        // 房间id
-        string secret   // 房间密码
+        int64 house_id      // 房间id
+        int64 renter_id     // 租客id
+        int64 landlord_id   // 房东id
+        string secret       // 房间密码
+        int64 start_time    // 密码起始时间
+        int64 limit         // 密码有效期
     }
 
     // 根据账户id 初始化账户
     public string init_account(uint64 id) {
 
-        db_set(id, 0)
+        account = Account{
+            id: id,
+            balance: 0
+        }
+        db_set(id, account)
 
         return 'success'
 
     }
 
     // 往账户充值
-    public string deposit(uint64 id, float amount) {
+    public string deposit(uint64 user_id, float amount) {
 
-        balance = db_get(id)
-        db_set(id, balance + amount)
+        str = db_get(user_id)
+        obj = json_to_obj<Account>(str)
+        
+        obj.balance += amount
+        db_set(user_id, obj)
 
         return 'success'
 
     }
 
-    // 更新账户余额
+    // 更新账户
     public string update_account(Account account) {
 
-        db_set(account.id, account.balance)
+        db_set(account.id, Account)
 
         return 'success'
     }
 
     // 根据用户id获取账户
-    public Account get_account_by_id(uint64 id){
-        return Account{
-            id: id
-            balance: db_get(id)
-        }
+    public Account get_account_by_id(uint64 user_id){
+
+        str = db_get(user_id)
+        obj = json_to_obj<Account>(str)
+
+        return obj
     }
 
     // 往智能合约里抵押资产 
@@ -108,34 +121,87 @@ contract RentHouse {
     // 返回租房信息id
     public int64 add_rental_info(uint64 id, RentalInfo info){
         
-        // 序列化info
-        str_info =  serialize(info)
-
-        db_set(id, str_info)
+        // 直接存储info，自动序列化
+        db_set(id, info)
 
         return rent_id
     }
 
     // 根据租房id获取租房信息
-    public RentalInfo get_rental_info(int64 id){
+    public RentalInfo get_rental_info(uint64 id){
         
-        db_get(id)
+        str = db_get(id)
+        obj = json_to_obj<RentalInfo>(str)
+        return obj
+    }
+
+    // 存储房间
+    public string set_house(House house) {
+
+        db_set(id, house)
+
+        return 'success'
     }
 
     // 根据租客id获取房间
     public House get_house_by_renter_id(uint64 id) {
+        str = db_get(id)
+        obj = json_to_obj<RentalInfo>(str)
+
+        return obj
+    }
+
+    // 租客抵押保证金，请求查看房间
+    // 返回房间密码锁
+    public string watch_house(uint64 renter_id, uint64 rent_id, float amount) {
+
+        str = db_get(rent_id)
+        house = json_to_obj<RentalInfo>(str)
+
+        renter_account = get_account_by_id(renter_id)
+        contract_account = get_account_by_id(contract_id)
+
+         if renter_account.balance > amount{
+            renter_account.balance -= amount
+            contract_account.balance += amount
+        }
+
+        update_account(renter_account)
+        update_account(contract_account)
+
+        // 应该返回临时通行证
+        return house.secret
+    }
+
+    // 返还看房保证金
+    public string watch_house_return(uint64 renter_id, float amount) {
+
+        renter_account = get_account_by_id(renter_id)
+        contract_account = get_account_by_id(contract_id)
+
+         if contract_account.balance > amount{
+            contract_account.balance -= amount
+            renter_account.balance += amount
+        }
+
+        update_account(renter_account)
+        update_account(contract_account)
+
+        return "success"
 
     }
 
     // 签署租房合约，成功后返回密码锁给租客
     public string sign_contract() {
 
-        return secret
+        // 根据合约内容发放规定期限房间通行证
+
+        return house.secret
     }
 
-    // 缴纳租金
+    // 每月按时缴纳租金
     // id标识租客，amount为缴纳金额
-    public string pay_rent(string renter_id, string landlord_id, float amount) {
+    public string pay_rent(uint64 renter_id, uint64 landlord_id, float amount) {
         
         renter_account = get_account_by_id(renter_id) 
         landlord_account = get_account_by_id(landlord_id)
@@ -153,7 +219,7 @@ contract RentHouse {
     }
 
     // 租客违约，则应该扣除租客一定押金后退还剩余押金，并变更密码锁？
-    public string renter_break_contract(string renter_id, string landlord_id) {
+    public string renter_break_contract(uint64 renter_id, uint64 landlord_id) {
         
         // 哪位租客的哪套房违约
         house = get_house_by_renter_id(renter_id)
@@ -164,7 +230,7 @@ contract RentHouse {
 
         landlord_account = get_account_by_id(landlord_id) 
 
-        // 获取智能合约账户
+        // 获取智能合约账户 合约id全局
         contract_account = get_account_by_id(contract_id)
 
         // 违约金 = 押金 * 违约比例
@@ -185,12 +251,12 @@ contract RentHouse {
         update_account(contract_account)
 
         // 更换密码锁
-        change_secret(house.id)
+        change_house_secret(house.id)
 
     }
 
     // 房东违约，则应该扣除房东部分抵押金，同时返还租客押金
-    public string landlord_break_contract(string renter_id, string landlord_id) {
+    public string landlord_break_contract(uint64 renter_id, uint64 landlord_id) {
         
     }
 
